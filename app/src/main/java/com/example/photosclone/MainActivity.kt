@@ -5,13 +5,15 @@ import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-//import androidx.compose.ui.test.isSelected
 import androidx.documentfile.provider.DocumentFile
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.tabs.TabLayout
 import kotlinx.coroutines.*
 import java.text.SimpleDateFormat
 import java.util.*
@@ -22,36 +24,39 @@ class MainActivity : AppCompatActivity() {
     private lateinit var adapter: GalleryAdapter
     private lateinit var btnUpload: Button
     private lateinit var btnDeleteMulti: Button
+    private lateinit var tabLayout: TabLayout
+    private lateinit var layoutLoading: LinearLayout
+    private lateinit var tvLoadingProgress: TextView
 
-    // Biến lưu trữ thư mục gốc của USB và danh sách ảnh hiện tại trên RAM
     private var usbRootDirectory: DocumentFile? = null
-    private var currentImageList = mutableListOf<MediaItem>()
 
-    // 1. Trình lắng nghe chọn thư mục USB
-    private val openDocumentTreeLauncher = registerForActivityResult(
-        ActivityResultContracts.OpenDocumentTree()
-    ) { uri: Uri? ->
+    // 2 Danh sách riêng biệt cho 2 Tab
+    private var standardImageList = mutableListOf<MediaItem>()
+    private var otherImageList = mutableListOf<MediaItem>()
+    private var currentTabIndex = 0 // 0 = Chuẩn, 1 = Khác
+
+    private val openDocumentTreeLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
-            // QUAN TRỌNG: Xin thêm quyền GHI (FLAG_GRANT_WRITE_URI_PERMISSION)
-            val takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            contentResolver.takePersistableUriPermission(uri, takeFlags)
-
-            // Lưu lại thư mục gốc để lát nữa upload file vào đây
+            val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            contentResolver.takePersistableUriPermission(uri, flags)
             usbRootDirectory = DocumentFile.fromTreeUri(this, uri)
-
-            // Hiện nút Tải lên và bắt đầu quét ảnh
             btnUpload.visibility = View.VISIBLE
             scanUsbForImages(uri)
         }
     }
 
-    // 2. Trình lắng nghe chọn ảnh từ điện thoại để upload
-    private val pickMultipleImagesLauncher = registerForActivityResult(
-        ActivityResultContracts.GetMultipleContents()
-    ) { uris: List<Uri> ->
-        // uris lúc này là một danh sách các đường dẫn ảnh
-        if (uris.isNotEmpty() && usbRootDirectory != null) {
-            uploadMultipleImagesToUsb(uris, usbRootDirectory!!)
+    private val pickMultipleImagesLauncher = registerForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
+        if (uris.isNotEmpty() && usbRootDirectory != null) uploadMultipleImagesToUsb(uris, usbRootDirectory!!)
+    }
+
+    private val fullScreenLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val deletedUri = result.data?.getStringExtra("DELETED_URI")?.let { Uri.parse(it) }
+            if (deletedUri != null) {
+                standardImageList.removeAll { it.uri == deletedUri }
+                otherImageList.removeAll { it.uri == deletedUri }
+                refreshUI()
+            }
         }
     }
 
@@ -60,188 +65,197 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         btnUpload = findViewById(R.id.btn_upload)
-        setupRecyclerView()
-
-        findViewById<Button>(R.id.btn_select_usb).setOnClickListener {
-            openDocumentTreeLauncher.launch(null)
-        }
-
-        btnUpload.setOnClickListener {
-            // Khởi chạy trình chọn nhiều ảnh
-            pickMultipleImagesLauncher.launch("image/*")
-        }
-
         btnDeleteMulti = findViewById(R.id.btn_delete_multi)
+        tabLayout = findViewById(R.id.tab_layout)
+        layoutLoading = findViewById(R.id.layout_loading)
+        tvLoadingProgress = findViewById(R.id.tv_loading_progress)
 
-        btnDeleteMulti.setOnClickListener {
-            deleteSelectedImages()
-        }
+        setupRecyclerView()
+        setupTabs()
+
+        findViewById<Button>(R.id.btn_select_usb).setOnClickListener { openDocumentTreeLauncher.launch(null) }
+        btnUpload.setOnClickListener { pickMultipleImagesLauncher.launch("image/*") }
+        btnDeleteMulti.setOnClickListener { deleteSelectedImages() }
     }
 
-    // 1. Khai báo launcher để đợi kết quả từ màn hình FullScreen
-    private val fullScreenLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == RESULT_OK) {
-            val deletedUriString = result.data?.getStringExtra("DELETED_URI")
-            if (deletedUriString != null) {
-                val deletedUri = Uri.parse(deletedUriString)
-
-                // Xóa ảnh khỏi danh sách đang lưu trên RAM
-                currentImageList.removeAll { it.uri == deletedUri }
-
-                // Vẽ lại giao diện ngay lập tức
+    private fun setupTabs() {
+        tabLayout.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
+            override fun onTabSelected(tab: TabLayout.Tab?) {
+                currentTabIndex = tab?.position ?: 0
+                adapter.isSelectionMode = false // Hủy chọn khi chuyển tab
                 refreshUI()
             }
-        }
+            override fun onTabUnselected(tab: TabLayout.Tab?) {}
+            override fun onTabReselected(tab: TabLayout.Tab?) {}
+        })
     }
 
     private fun setupRecyclerView() {
         recyclerView = findViewById(R.id.recycler_view)
-
         adapter = GalleryAdapter(
-            // 1. Phục hồi lại code mở ảnh Full Screen ở đây
             onImageClick = { uri ->
-                val intent = Intent(this, FullScreenActivity::class.java).apply {
-                    putExtra("IMAGE_URI", uri.toString())
-                }
-                // Gọi launcher để lỡ người dùng xóa ảnh trong màn hình FullScreen thì bên ngoài còn biết mà cập nhật
+                val intent = Intent(this, FullScreenActivity::class.java).apply { putExtra("IMAGE_URI", uri.toString()) }
                 fullScreenLauncher.launch(intent)
             },
-            // 2. Logic ẩn/hiện nút khi chọn nhiều ảnh
             onSelectionChange = { isSelected ->
                 btnDeleteMulti.visibility = if (isSelected) View.VISIBLE else View.GONE
                 btnUpload.visibility = if (isSelected) View.GONE else View.VISIBLE
             }
         )
 
-        // Setup Grid
         val layoutManager = GridLayoutManager(this, 4)
         layoutManager.spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
             override fun getSpanSize(position: Int): Int {
                 return if (adapter.getItemViewType(position) == GalleryAdapter.TYPE_HEADER) 4 else 1
             }
         }
-
         recyclerView.layoutManager = layoutManager
         recyclerView.adapter = adapter
     }
 
     private fun scanUsbForImages(rootUri: Uri) {
+        // layoutLoading.visibility = View.VISIBLE
+        // tvLoadingProgress.text = "Prepare scanning..."
+        standardImageList.clear()
+        otherImageList.clear()
+        adapter.submitList(emptyList())
+
         CoroutineScope(Dispatchers.IO).launch {
             val rootDir = DocumentFile.fromTreeUri(this@MainActivity, rootUri)
-            val tempList = mutableListOf<MediaItem>()
+            var scannedCount = 0
+            val chunkStandard = mutableListOf<MediaItem>()
+            val chunkOther = mutableListOf<MediaItem>()
 
-            fun traverse(dir: DocumentFile?) {
+            // Hàm Regex siêu chặt để kiểm tra tên file
+            val strictPattern = Regex("""(?:^|[^0-9])(19[9]\d|20[0-3]\d)[-.]?(0[1-9]|1[0-2])[-.]?(0[1-9]|[12]\d|3[01])[_-](\d{6})""")
+
+            suspend fun traverse(dir: DocumentFile?) {
+                if (!isActive) return
                 dir?.listFiles()?.forEach { file ->
-                    if (file.isDirectory) {
-                        traverse(file)
-                    } else if (file.type?.startsWith("image/") == true) {
-                        tempList.add(MediaItem(file.uri, file.lastModified()))
+                    if (file.isDirectory) traverse(file)
+                    else if (file.type?.startsWith("image/") == true) {
+                        scannedCount++
+                        val match = strictPattern.find(file.name ?: "")
+
+                        if (match != null) {
+                            // Cú pháp đúng -> Phân tích ngày và cho vào Tab 1
+                            try {
+                                val year = match.groupValues[1].toInt()
+                                val month = match.groupValues[2].toInt()
+                                val day = match.groupValues[3].toInt()
+                                val cal = Calendar.getInstance().apply { set(year, month - 1, day) }
+                                chunkStandard.add(MediaItem(file.uri, cal.timeInMillis))
+                            } catch (e: Exception) {
+                                chunkOther.add(MediaItem(file.uri, file.lastModified()))
+                            }
+                        } else {
+                            // Sai cú pháp -> Cho ngay vào Tab 2
+                            chunkOther.add(MediaItem(file.uri, file.lastModified()))
+                        }
+
+                        // Incremental update (Cứ 50 ảnh cập nhật 1 lần)
+                        if (chunkStandard.size + chunkOther.size >= 50) {
+                            standardImageList.addAll(chunkStandard)
+                            otherImageList.addAll(chunkOther)
+                            chunkStandard.clear()
+                            chunkOther.clear()
+                            withContext(Dispatchers.Main) {
+                                tvLoadingProgress.text = "Fought $scannedCount image..."
+                                refreshUI()
+                            }
+                        }
                     }
                 }
             }
             traverse(rootDir)
 
-            // Cập nhật danh sách trên RAM
-            currentImageList = tempList
+            standardImageList.addAll(chunkStandard)
+            otherImageList.addAll(chunkOther)
 
             withContext(Dispatchers.Main) {
                 refreshUI()
+                layoutLoading.visibility = View.GONE
+                Toast.makeText(this@MainActivity, "Done! About: $scannedCount image", Toast.LENGTH_LONG).show()
             }
         }
     }
 
-    // 3. Hàm cốt lõi: Copy luồng byte từ Điện thoại sang USB
     private fun uploadMultipleImagesToUsb(sourceUris: List<Uri>, destinationDir: DocumentFile) {
-        // Báo cho người dùng biết số lượng ảnh đang được xử lý
-        Toast.makeText(this, "Đang tải lên ${sourceUris.size} ảnh...", Toast.LENGTH_SHORT).show()
-
+        Toast.makeText(this, "Uploading ${sourceUris.size} images...", Toast.LENGTH_SHORT).show()
         CoroutineScope(Dispatchers.IO).launch {
             var successCount = 0
-            val newItems = mutableListOf<MediaItem>() // Chứa danh sách ảnh vừa tải thành công
+            val sdf = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
 
-            // Lặp qua từng ảnh mà người dùng đã chọn
-            for (sourceUri in sourceUris) {
+            sourceUris.forEachIndexed { index, sourceUri ->
                 try {
-                    // Thêm UUID để tên file không bao giờ bị trùng lặp
-                    val randomText = java.util.UUID.randomUUID().toString().take(5)
-                    val fileName = "IMG_${System.currentTimeMillis()}_$randomText.jpg"
+                    // Cố tình cộng thêm mili-giây để tên file tăng dần, kết hợp UUID để chống trùng
+                    val timeForName = System.currentTimeMillis() + (index * 1000)
+                    val timestampStr = sdf.format(Date(timeForName))
+                    val randomId = UUID.randomUUID().toString().take(4)
 
-                    val newUsbFile = destinationDir.createFile("image/jpeg", fileName)
+                    // Tên chuẩn mực: IMG_20260422_235501_a1b2.jpg
+                    val newFileName = "IMG_${timestampStr}_${randomId}.jpg"
+                    val newUsbFile = destinationDir.createFile("image/jpeg", newFileName)
 
                     if (newUsbFile != null) {
-                        // Copy từng file một
-                        contentResolver.openInputStream(sourceUri)?.use { inputStream ->
-                            contentResolver.openOutputStream(newUsbFile.uri)?.use { outputStream ->
-                                inputStream.copyTo(outputStream)
+                        contentResolver.openInputStream(sourceUri)?.use { input ->
+                            contentResolver.openOutputStream(newUsbFile.uri)?.use { output ->
+                                input.copyTo(output)
                             }
                         }
-
-                        // Copy xong thì gom vào danh sách tạm
-                        newItems.add(MediaItem(newUsbFile.uri, newUsbFile.lastModified()))
+                        // Upload xong tự động ném vào Tab 1 (Standard)
+                        standardImageList.add(MediaItem(newUsbFile.uri, timeForName))
                         successCount++
                     }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
+                } catch (e: Exception) { e.printStackTrace() }
             }
-
-            // Sau khi vòng lặp kết thúc, cập nhật toàn bộ vào giao diện 1 lần duy nhất
-            if (newItems.isNotEmpty()) {
-                currentImageList.addAll(newItems)
-
-                withContext(Dispatchers.Main) {
-                    refreshUI() // Vẽ lại lưới ảnh
-                    Toast.makeText(this@MainActivity, "Đã tải xong $successCount/${sourceUris.size} ảnh!", Toast.LENGTH_LONG).show()
-                }
+            withContext(Dispatchers.Main) {
+                refreshUI()
+                Toast.makeText(this@MainActivity, "Uploaded $successCount images!", Toast.LENGTH_LONG).show()
             }
         }
-    }
-
-    // Tách riêng hàm Refresh UI để dùng chung cho lúc Scan và lúc Upload
-    private fun refreshUI() {
-        val groupedImages = groupImagesByDate(currentImageList)
-        val flatList = mutableListOf<ListItem>()
-
-        groupedImages.forEach { (date, images) ->
-            flatList.add(ListItem.Header(date))
-            images.forEach { flatList.add(ListItem.Image(it.uri, it.dateModified)) }
-        }
-
-        adapter.submitList(flatList)
-    }
-
-    private fun groupImagesByDate(images: List<MediaItem>): Map<String, List<MediaItem>> {
-        val dateFormat = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
-        return images
-            .sortedByDescending { it.dateModified }
-            .groupBy { dateFormat.format(Date(it.dateModified)) }
     }
 
     private fun deleteSelectedImages() {
-        // Lấy danh sách các URI đang được chọn từ Adapter thay vì từ currentImageList
         val selectedUris = adapter.getSelectedUris()
         if (selectedUris.isEmpty()) return
 
         CoroutineScope(Dispatchers.IO).launch {
             var count = 0
-
-            // Duyệt qua danh sách các Uri cần xóa
             selectedUris.forEach { uri ->
                 val file = DocumentFile.fromSingleUri(this@MainActivity, uri)
                 if (file?.delete() == true) {
-                    // Xóa thành công trên USB thì mới gỡ khỏi danh sách gốc trên RAM
-                    currentImageList.removeAll { it.uri == uri }
+                    if (currentTabIndex == 0) standardImageList.removeAll { it.uri == uri }
+                    else otherImageList.removeAll { it.uri == uri }
                     count++
                 }
             }
-
             withContext(Dispatchers.Main) {
-                adapter.isSelectionMode = false // Thoát chế độ chọn UI
-                refreshUI() // Vẽ lại lưới ảnh mới
-                Toast.makeText(this@MainActivity, "Đã xóa $count ảnh", Toast.LENGTH_SHORT).show()
+                adapter.isSelectionMode = false
+                refreshUI()
+                Toast.makeText(this@MainActivity, "Deleted $count images", Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    private fun refreshUI() {
+        val flatList = mutableListOf<ListItem>()
+        if (currentTabIndex == 0) {
+            // TAB 1: Có hiển thị Header ngày tháng
+            val dateFormat = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
+            val grouped = standardImageList.sortedByDescending { it.dateModified }
+                .groupBy { dateFormat.format(Date(it.dateModified)) }
+
+            grouped.forEach { (date, images) ->
+                flatList.add(ListItem.Header(date))
+                images.forEach { flatList.add(ListItem.Image(it.uri, it.dateModified)) }
+            }
+        } else {
+            // TAB 2: Không hiển thị Header, chỉ dải ảnh phẳng lì
+            otherImageList.sortedByDescending { it.dateModified }.forEach {
+                flatList.add(ListItem.Image(it.uri, it.dateModified))
+            }
+        }
+        adapter.submitList(flatList)
     }
 }

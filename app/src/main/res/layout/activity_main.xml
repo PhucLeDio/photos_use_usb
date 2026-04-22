@@ -12,7 +12,7 @@
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center"
-        android:padding="35dp"
+        android:paddingTop="35dp"
         app:layout_constraintTop_toTopOf="parent">
 
         <Button
@@ -27,23 +27,70 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Upload"
-            android:visibility="gone" />
+            android:visibility="gone"
+            android:layout_marginEnd="8dp"/>
 
         <Button
             android:id="@+id/btn_delete_multi"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Delete Selected"
+            android:text="delete"
             android:visibility="gone"
-            android:backgroundTint="#F44336" /> </LinearLayout>
+            android:backgroundTint="#F44336" />
+    </LinearLayout>
+
+    <com.google.android.material.tabs.TabLayout
+        android:id="@+id/tab_layout"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:layout_constraintTop_toBottomOf="@id/layout_buttons">
+
+        <com.google.android.material.tabs.TabItem
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Date images" />
+
+        <com.google.android.material.tabs.TabItem
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Non-date images" />
+    </com.google.android.material.tabs.TabLayout>
 
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/recycler_view"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        app:layout_constraintTop_toBottomOf="@id/layout_buttons"
+        app:layout_constraintTop_toBottomOf="@id/tab_layout"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
+
+    <LinearLayout
+        android:id="@+id/layout_loading"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:visibility="gone"
+        android:background="#CCFFFFFF"
+        android:padding="24dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <ProgressBar
+            android:layout_width="48dp"
+            android:layout_height="48dp" />
+
+        <TextView
+            android:id="@+id/tv_loading_progress"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Scanning USB..."
+            android:textStyle="bold"
+            android:textColor="#333333"/>
+    </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

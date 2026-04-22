@@ -51,4 +51,6 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.0.1")
     // Thư viện hỗ trợ phóng to ảnh bằng cử chỉ ngón tay
     implementation("com.github.chrisbanes:PhotoView:2.3.0")
+    // Thư viện hỗ trợ đọc metadata (ngày chụp, tọa độ...) của ảnh
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
 }
