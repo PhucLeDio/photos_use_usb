@@ -19,21 +19,21 @@
             android:id="@+id/btn_select_usb"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Choose your USB location"
+            android:text="Chọn USB"
             android:layout_marginEnd="8dp"/>
 
         <Button
             android:id="@+id/btn_upload"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Upload image"
+            android:text="Tải ảnh lên"
             android:visibility="gone" />
 
         <Button
             android:id="@+id/btn_delete_multi"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Delete"
+            android:text="Xóa đã chọn"
             android:visibility="gone"
             android:backgroundTint="#F44336" /> </LinearLayout>
 
